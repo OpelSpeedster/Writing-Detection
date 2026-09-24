@@ -17,7 +17,7 @@ A production-grade machine learning system that classifies academic writing as *
 
 Trained on the Kaggle dataset [AI vs Human Academic Writing Dataset](https://www.kaggle.com/datasets/razanihababdellatif/ai-vs-human-academic-writing-dataset) by Razan Ihab Abdellatif — 10,200 records, 20 features, binary target (`Is_AI_Assisted`).
 
-> **Status:** All 36 tests passing ✅ &nbsp;|&nbsp; `src/train.py` restored after accidental rename
+> **Status:** All 36 tests passing ✅ &nbsp;|&nbsp; `src/train.py`
 
 ---
 
