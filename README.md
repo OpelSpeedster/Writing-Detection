@@ -1,8 +1,23 @@
 # AI vs Human Academic Writing Detector
 
+> **IBM SkillsBuild / BharatCares / AICTE Internship Submission — VishalSV**
+
+### Submission Files
+
+| Requirement | Filename | Status |
+|---|---|---|
+| Combined source code (`.py`) | `VishalSV_AIvsHumanWritingDetector.py` | ✅ |
+| Python dependencies | `requirements.txt` | ✅ |
+| Project report (`.docx`) | `docs/VishalSV_ProjectReport.docx` | ✅ |
+| Project README | `README.md` | ✅ |
+
+**Dataset:** [AI vs Human Academic Writing Dataset — Razan Ihab Abdellatif](https://www.kaggle.com/datasets/razanihababdellatif/ai-vs-human-academic-writing-dataset) (Kaggle, 10,200 records, 20 features)
+
 A production-grade machine learning system that classifies academic writing as **AI-assisted** or **Human-authored** using behavioral telemetry and linguistic metrics.
 
 Trained on the Kaggle dataset [AI vs Human Academic Writing Dataset](https://www.kaggle.com/datasets/razanihababdellatif/ai-vs-human-academic-writing-dataset) by Razan Ihab Abdellatif — 10,200 records, 20 features, binary target (`Is_AI_Assisted`).
+
+> **Status:** All 36 tests passing ✅ &nbsp;|&nbsp; `src/train.py` restored after accidental rename
 
 ---
 
@@ -38,7 +53,7 @@ The Streamlit UI renders verdicts in a forensic terminal style — monospaced, c
 ├── data/
 │   └── ai_writing_detection_dataset.csv
 ├── docs/
-│   └── AI_vs_Human_Writing_Detector_Report.docx
+│   └── VishalSV_ProjectReport.docx
 └── requirements.txt
 ```
 
@@ -305,7 +320,7 @@ Both are read from environment variables at startup.
 A full technical project report (Word document) is available at:
 
 ```
-docs/AI_vs_Human_Writing_Detector_Report.docx
+docs/VishalSV_ProjectReport.docx
 ```
 
 Includes architecture description, dataset analysis, hyperparameter table, evaluation results, all UI screenshots, testing summary, and run instructions.
