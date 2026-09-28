@@ -3,5 +3,7 @@ tests/
 docs/
 output/
 .pytest_cache/
+__pycache__/
+*.pyc
 app.py
 VishalSV_AIvsHumanWritingDetector.py
