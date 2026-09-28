@@ -5,9 +5,5 @@
       "maxDuration": 60,
       "memory": 1024
     }
-  },
-  "env": {
-    "MODEL_PATH": "models/pipeline.pkl"
-  },
-  "excludeFiles": "data/**,tests/**,docs/**,output/**,.git/**,.pytest_cache/**,app.py,VishalSV_AIvsHumanWritingDetector.py"
+  }
 }
