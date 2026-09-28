@@ -25,6 +25,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 # ---------------------------------------------------------------------------
@@ -122,6 +123,29 @@ class BatchPredictResponse(BaseModel):
 # Lifespan — load pipeline at startup, release at shutdown
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Pipeline loading — lifespan (local) + lazy (Vercel serverless via Mangum)
+# Vercel serverless functions do not reliably run lifespan handlers, so every
+# request path falls back to lazy disk load with a module-level cache.
+# ---------------------------------------------------------------------------
+
+_cached_pipeline = None
+
+
+def _load_pipeline_from_disk():
+    """Load pipeline from MODEL_PATH; return None instead of raising."""
+    global _cached_pipeline
+    if _cached_pipeline is not None:
+        return _cached_pipeline
+    try:
+        _cached_pipeline = joblib.load(MODEL_PATH)
+        print(f"[api] Pipeline lazily loaded from: {MODEL_PATH}")
+    except FileNotFoundError:
+        print(f"[api] WARNING: pipeline not found at {MODEL_PATH}. /predict will return 503.")
+        _cached_pipeline = None
+    return _cached_pipeline
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load the ML pipeline on startup; unload on shutdown."""
@@ -132,6 +156,8 @@ async def lifespan(app: FastAPI):
     except FileNotFoundError:
         print(f"[api] WARNING: pipeline not found at {MODEL_PATH}. /predict will return 503.")
     app.state.pipeline = pipeline
+    global _cached_pipeline
+    _cached_pipeline = pipeline
     yield
     app.state.pipeline = None
 
@@ -145,6 +171,15 @@ app = FastAPI(
     description="Predict whether academic writing was AI-assisted or human-authored.",
     version="1.0.0",
     lifespan=lifespan,
+)
+
+# CORS — required for Streamlit Cloud frontend calling the Vercel backend.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -172,14 +207,27 @@ def _make_prediction(pipeline, df: pd.DataFrame) -> PredictResponse:
 
 
 def _get_pipeline(request_state):
-    """Return the loaded pipeline or raise 503 if not available."""
-    pipeline = request_state.pipeline
+    """Return the loaded pipeline or raise 503 if not available.
+
+    Checks lifespan state first, then falls back to lazy disk load so
+    Vercel serverless (Mangum, no lifespan) still serves predictions.
+    """
+    pipeline = getattr(request_state, "pipeline", None)
+    if pipeline is None:
+        pipeline = _load_pipeline_from_disk()
     if pipeline is None:
         raise HTTPException(
             status_code=503,
             detail="Model pipeline not loaded. Run src/train.py to generate models/pipeline.pkl.",
         )
     return pipeline
+
+
+def _is_model_loaded(request_state) -> bool:
+    """Non-raising check for /health (lifespan state or lazy disk load)."""
+    if getattr(request_state, "pipeline", None) is not None:
+        return True
+    return _load_pipeline_from_disk() is not None
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +237,7 @@ def _get_pipeline(request_state):
 @app.get("/health", summary="Liveness check")
 def health():
     """Returns 200 with model_loaded status. Always responds, even if model is missing."""
-    return {"status": "ok", "model_loaded": app.state.pipeline is not None}
+    return {"status": "ok", "model_loaded": _is_model_loaded(app.state)}
 
 
 @app.get("/model/info", summary="Pipeline metadata")
