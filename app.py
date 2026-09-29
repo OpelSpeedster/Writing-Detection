@@ -3,14 +3,22 @@ app.py
 ======
 Streamlit frontend for the AI vs Human Academic Writing Detector.
 
-Communicates with the FastAPI backend (src/api.py) running at API_BASE_URL.
-Set the API_BASE_URL environment variable to point at a remote server;
-default is http://localhost:8000.
+Two inference modes (automatic):
+1. Backend mode — POSTs to the FastAPI backend (src/api.py) at API_BASE_URL,
+   when that server is reachable and has the model loaded.
+2. Standalone mode (Streamlit Cloud) — loads models/pipeline.pkl directly
+   with joblib, no backend server required. This is the permanent-deploy path.
+
+Env vars:
+  API_BASE_URL — backend URL (default: http://localhost:8000).
+                 Set to "" to force standalone mode.
+  MODEL_PATH   — pipeline path for standalone mode (default: models/pipeline.pkl).
 """
 from __future__ import annotations
 
 import os
 import time
+from pathlib import Path
 from typing import Optional
 
 import requests
@@ -20,7 +28,23 @@ import streamlit as st
 # Configuration
 # ---------------------------------------------------------------------------
 
-API_BASE_URL: str = os.environ.get("API_BASE_URL", "http://localhost:8000").rstrip("/")
+def _resolve_setting(name: str, default: str) -> str:
+    """Secrets (.streamlit/secrets.toml on Cloud) take precedence over env vars."""
+    try:
+        val = st.secrets.get(name, None)
+        if val is not None and str(val).strip() != "":
+            return str(val).strip()
+        if val is not None:  # explicit empty string forces standalone mode
+            return ""
+    except Exception:
+        pass
+    return os.environ.get(name, default)
+
+
+API_BASE_URL: str = _resolve_setting("API_BASE_URL", "http://localhost:8000").rstrip("/")
+MODEL_PATH: str = _resolve_setting("MODEL_PATH", "models/pipeline.pkl")
+
+USE_BACKEND: bool = bool(API_BASE_URL)  # empty string forces standalone mode
 
 SUBMISSION_TYPES   = ["Essay", "Lab_Report", "Research_Paper", "Literature_Review"]
 ACADEMIC_LEVELS    = ["Undergraduate", "Postgraduate", "High_School"]
@@ -235,23 +259,73 @@ st.markdown(
 )
 
 # ---------------------------------------------------------------------------
-# API helpers
+# Inference helpers — backend API with standalone fallback
 # ---------------------------------------------------------------------------
 
+@st.cache_data(ttl=300, show_spinner=False)
 def _check_backend() -> bool:
-    """Return True if the backend /health endpoint is reachable."""
+    """Return True if the backend /health endpoint is reachable with model loaded."""
+    if not USE_BACKEND:
+        return False
     try:
-        r = requests.get(f"{API_BASE_URL}/health", timeout=2)
+        r = requests.get(f"{API_BASE_URL}/health", timeout=1.5)
         return r.status_code == 200 and r.json().get("model_loaded", False)
     except Exception:
         return False
 
 
-def _predict(payload: dict) -> dict:
+@st.cache_resource(show_spinner=False)
+def _load_local_pipeline():
+    """Load the sklearn Pipeline from MODEL_PATH once; return None if missing."""
+    try:
+        import joblib
+
+        path = Path(MODEL_PATH)
+        if not path.is_file():
+            # Fallback: resolve relative to this file (Streamlit Cloud cwd can vary)
+            path = Path(__file__).parent / MODEL_PATH
+        if not path.is_file():
+            return None
+        return joblib.load(path)
+    except Exception:
+        return None
+
+
+def _predict_via_api(payload: dict) -> dict:
     """POST to /predict and return the response dict, or raise on error."""
     r = requests.post(f"{API_BASE_URL}/predict", json=payload, timeout=10)
     r.raise_for_status()
     return r.json()
+
+
+def _predict_local(payload: dict) -> dict:
+    """Run the local pipeline on a single payload; mirrors src/api.py logic."""
+    import pandas as pd
+
+    pipeline = _load_local_pipeline()
+    if pipeline is None:
+        raise RuntimeError(f"Model not found at {MODEL_PATH}. Run src/train.py first.")
+    df = pd.DataFrame([payload])
+    is_ai = int(pipeline.predict(df)[0])
+    proba = float(pipeline.predict_proba(df)[0, 1])
+    conf = float(max(proba, 1.0 - proba))
+    return {
+        "label": "AI" if is_ai else "Human",
+        "is_ai": is_ai,
+        "probability_ai": round(proba, 6),
+        "confidence": round(conf, 6),
+    }
+
+
+def _predict(payload: dict) -> dict:
+    """Prefer backend API when reachable; otherwise use local pipeline."""
+    if backend_ok:
+        try:
+            return _predict_via_api(payload)
+        except Exception:
+            # Backend died between health check and predict — fall through
+            pass
+    return _predict_local(payload)
 
 
 # ---------------------------------------------------------------------------
@@ -278,19 +352,30 @@ st.markdown(
 )
 
 # ---------------------------------------------------------------------------
-# Backend status banner
+# Inference mode banner — backend if reachable, else standalone
 # ---------------------------------------------------------------------------
 
 backend_ok = _check_backend()
-if not backend_ok:
+local_pipeline = _load_local_pipeline()
+local_ok = local_pipeline is not None
+
+if not backend_ok and not local_ok:
     st.markdown(
         f"""<div class="error-box">
-        ⚠ Backend unreachable at <strong>{API_BASE_URL}</strong><br>
-        Start the API server: <code>uvicorn src.api:app --reload --port 8000</code>
+        ⚠ No inference backend available.<br>
+        Backend unreachable at <strong>{API_BASE_URL or '(disabled)'}</strong>
+        and no model found at <strong>{MODEL_PATH}</strong><br>
+        Start the API: <code>uvicorn src.api:app --reload --port 8000</code>
+        or train the model: <code>python -m src.train data/ai_writing_detection_dataset.csv {MODEL_PATH}</code>
         </div>""",
         unsafe_allow_html=True,
     )
     st.stop()
+
+if backend_ok:
+    st.caption("🔌 Connected to FastAPI backend")
+else:
+    st.caption("☁️ Running in standalone mode (local model)")
 
 # ---------------------------------------------------------------------------
 # Two-column layout: form (left) | results (right)
@@ -431,19 +516,31 @@ with col_result:
             "Sentence_Complexity":   float(sentence_complexity),
         }
 
-        # Call the API
+        # Call inference (backend API preferred, local pipeline fallback)
         with st.spinner("Analysing..."):
             try:
                 result = _predict(payload)
             except requests.exceptions.ConnectionError:
-                st.markdown(
-                    f'<div class="error-box">ERR: cannot connect to {API_BASE_URL}</div>',
-                    unsafe_allow_html=True,
-                )
-                st.stop()
+                try:
+                    result = _predict_local(payload)
+                except Exception:
+                    st.markdown(
+                        f'<div class="error-box">ERR: cannot connect to {API_BASE_URL}</div>',
+                        unsafe_allow_html=True,
+                    )
+                    st.stop()
             except requests.exceptions.HTTPError as e:
+                try:
+                    result = _predict_local(payload)
+                except Exception:
+                    st.markdown(
+                        f'<div class="error-box">ERR: API returned {e.response.status_code}</div>',
+                        unsafe_allow_html=True,
+                    )
+                    st.stop()
+            except RuntimeError as e:
                 st.markdown(
-                    f'<div class="error-box">ERR: API returned {e.response.status_code}</div>',
+                    f'<div class="error-box">ERR: {e}</div>',
                     unsafe_allow_html=True,
                 )
                 st.stop()

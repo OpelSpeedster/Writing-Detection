@@ -4,4 +4,6 @@ __pycache__/
 .venv/
 venv/
 .env
-.vercel/
+.streamlit/secrets.toml
+# Local Netlify folder
+.netlify
