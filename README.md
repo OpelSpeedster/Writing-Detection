@@ -19,6 +19,7 @@ Trained on the Kaggle dataset [AI vs Human Academic Writing Dataset](https://www
 
 > **Status:** All 36 tests passing ✅ &nbsp;|&nbsp; `src/train.py` restored after accidental rename
 
+**Deploy Link**: [Academic Writing Detection with AI](https://writing-detection-nappg9fvtbxdgu8tuhdbgl5.streamlit.app)
 ---
 
 ## Demo
